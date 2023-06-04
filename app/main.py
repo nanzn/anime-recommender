@@ -1,72 +1,87 @@
-# SETUP
-# Libraries 
+#########
+# SETUP #
+#########
+# libraries 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import scipy as sp
-import operator 
 
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Constants
+# constants
 DATA_PATH = "./data/"
 
-# LOAD DATA
-df = pd.read_csv(f"{DATA_PATH}anime.csv")
-print(df.head())
+#############
+# LOAD DATA #
+#############
+df_anime = pd.read_csv(f"{DATA_PATH}anime.csv")
+df_rating = pd.read_csv(f"{DATA_PATH}rating.csv")
 
+#################
+# DATA CLEANING #
+#################
+# replace -1 with null for missing ratings
+df_rating['rating'] = df_rating['rating'].replace({-1: np.nan}, regex=True)
 
-# Step 3: Data Collection
+# keep 'TV' anime only
+df_anime = df_anime[df_anime['type']=="TV"]
 
-# Download a movie dataset (e.g., from Kaggle) in CSV format and save it in the project directory.
-# Load the dataset into a pandas DataFrame:
-# python
-# Copy code
-# df_movies = pd.read_csv("movies.csv")
-# Step 4: Data Preprocessing
+# merge data
+df_merged = df_rating.merge(df_anime, left_on='anime_id', right_on='anime_id', suffixes=['_user', ''])
+df_merged = df_merged.rename(columns={'rating_user': 'user_rating'})
 
-# Clean the dataset by handling missing values, duplicate entries, and irrelevant columns.
-# Transform the dataset into a suitable format for recommendation purposes. For example, create a matrix where each row represents a movie and each column represents a user's rating for that movie.
-# Step 5: Building the Recommendation Engine
+# limit to users with id below 10,000 to save computing resources
+df_merged = df_merged[['user_id', 'name', 'user_rating']]
+df_merged_sub = df_merged[df_merged['user_id']<=10000]
 
-# Choose a recommendation algorithm, such as collaborative filtering or content-based filtering.
-# Implement the recommendation logic using the selected algorithm. For example, you can use the cosine similarity measure to find similar movies based on user ratings.
-# python
-# Copy code
-# def get_movie_recommendations(movie_title, num_recommendations=5):
-#     # Retrieve the index of the movie
-#     movie_index = df_movies[df_movies["title"] == movie_title].index[0]
+# pivot on user_id
+df_piv = df_merged_sub.pivot_table(index=['user_id'], columns=['name'], values='user_rating')
+
+# normalize to standardize rating values
+df_piv_norm = df_piv.apply(lambda x: (x-np.mean(x)) / (np.max(x)-np.min(x)), axis=1)
+
+# drop all columns containing 0
+df_piv_norm = df_piv_norm.fillna(0)
+df_piv_norm = df_piv_norm.T
+df_piv_norm = df_piv_norm.loc[:, (df_piv_norm!=0).any(axis=0)]
+
+#########################
+# RECOMMENDATION ENGINE #
+#########################
+# sparse matrix
+piv_sparse = sp.sparse.csr_matrix(df_piv_norm.values)
+
+# similarity 
+item_similarity = cosine_similarity(piv_sparse)
+# user_similarity = cosine_similarity(piv_sparse.T)
+
+# insert similarity matrics into dataframes
+df_item_sim = pd.DataFrame(item_similarity, index=df_piv_norm.index, columns=df_piv_norm.index)
+# df_user_sim = pd.DataFrame(user_similarity, index=df_piv_norm.columns, columns=df_piv_norm.columns)
+
+# top 10 anime recommendations
+def get_anime_recommendations(anime_name):
+    return df_item_sim.sort_values(by=anime_name, ascending=False).index[1:11]
+
+###################
+# WEB APPLICATION #
+###################
+def main():
+    st.title("Anime Recommendation App")
     
-#     # Calculate cosine similarity between the movie and all other movies
-#     similarity_scores = cosine_similarity(matrix, matrix[movie_index])
-    
-#     # Get the indices of movies with highest similarity scores
-#     similar_movies_indices = similarity_scores.argsort(axis=0)[-num_recommendations-1:-1][::-1]
-    
-#     # Return the recommended movie titles
-#     return df_movies["title"].iloc[similar_movies_indices]
-# Step 6: Creating the Web Application
+    anime_name = st.text_input("Enter a anime name:")
+    if st.button("Recommend"):
+        recommendations = get_anime_recommendations(anime_name)
 
-# Use Streamlit to create the user interface for the web application:
-# python
-# Copy code
-# def main():
-#     st.title("Movie Recommendation System")
-    
-#     movie_title = st.text_input("Enter a movie title:")
-#     if st.button("Recommend"):
-#         recommendations = get_movie_recommendations(movie_title)
-#         st.subheader("Recommended Movies:")
-#         for movie in recommendations:
-#             st.write(movie)
-# Step 7: Integrating the Recommendation Engine
+        st.subheader("Top 10 Recommended Animes:")
+        for anime in recommendations:
+            st.write(anime)
 
-# Integrate the recommendation engine code with the Streamlit application:
-# python
-# Copy code
-# if __name__ == "__main__":
-#     main()
-# Step 8: Running the Web Application
+if __name__ == "__main__":
+    main()
 
-# In the terminal, navigate to the project directory and run the Streamlit application using the command streamlit run movie_recommender.py.
-# The web application will open in a browser, allowing you to test the recommendation system by entering movie titles and clicking the "Recommend" button.
+###################
+# RUN APPLICATION #
+###################
+# streamlit run app/main.py
